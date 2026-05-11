@@ -1,0 +1,8 @@
+# direnv temp files
+.direnv
+
+# nix build
+/result
+
+# Added by cargo
+/target

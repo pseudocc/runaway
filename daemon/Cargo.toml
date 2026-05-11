@@ -1,0 +1,9 @@
+[package]
+name = "runaway-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "runawayd"
+path = "main.rs"

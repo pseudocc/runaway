@@ -1,0 +1,12 @@
+[package]
+name = "runaway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "runaway"
+path = "lib.rs"
+
+[dependencies]
+libc = "0.2.186"
