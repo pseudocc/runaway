@@ -18,7 +18,13 @@ dependencies = [
 [[package]]
 name = "runaway-cli"
 version = "0.1.0"
+dependencies = [
+ "runaway",
+]
 
 [[package]]
 name = "runaway-daemon"
 version = "0.1.0"
+dependencies = [
+ "runaway",
+]
