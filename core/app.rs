@@ -1,5 +1,7 @@
 use std::io;
 use std::fs;
+use std::collections::HashMap;
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 
 mod unix {
@@ -30,6 +32,7 @@ pub struct App {
     uid: u32,
     gid: u32,
     socket_path: PathBuf,
+    connections: HashMap<RawFd, AppContext>,
 
     // TODO: add real state variables here
     counter: usize,
@@ -41,26 +44,64 @@ impl App {
             uid: unsafe { libc::getuid() },
             gid: unsafe { libc::getgid() },
             socket_path: socket_path.as_ref().to_path_buf(),
+            connections: HashMap::new(),
             counter: 0,
         }
     }
 
-    pub fn on_connect(&mut self, ctx: &mut AppContext) -> io::Result<()> {
-        use std::io::{Read, Write};
+    pub fn on_connect(&mut self, socket: unix::Stream) -> io::Result<()> {
+        use crate::protocol::*;
+        use std::os::unix::io::AsRawFd;
+
+        const MAX_CONNECTIONS: usize = 64;
+
         println!("app: new connection from socket");
-        let mut message = [0u8; 7];
-        ctx.socket.read_exact(&mut message)?;
-        match &message {
-            b"counter" => {
-                self.counter += 1;
-                let response = format!("counter: {}", self.counter);
-                ctx.socket.write_all(response.as_bytes())?;
+        let fd = socket.as_raw_fd();
+        let mut ctx = AppContext::new(socket);
+        let mut handler = Server::new(&mut ctx.socket, true);
+        let request = handler.receive()?;
+        match request {
+            Request::ClientId if self.connections.len() >= MAX_CONNECTIONS => {
+                let response = Response::ProtocolError(ProtocolError::MaxConnectionReached);
+                handler.send(&response)
+            },
+            Request::ClientId => {
+                let response = Response::ClientId(handler.client_id);
+                handler.send(&response)?;
+                self.connections.insert(fd, ctx);
                 Ok(())
             },
             _ => {
-                println!("app: received unknown message: {:?}", message);
-                Err(io::Error::new(io::ErrorKind::InvalidData, "unknown message"))
+                let response = Response::ProtocolError(ProtocolError::InvalidRequest);
+                handler.send(&response)
             },
+        }
+    }
+
+    pub fn handle_request(&mut self, fd: RawFd) -> io::Result<()> {
+        use crate::protocol::*;
+
+        let ctx = match self.connections.get_mut(&fd) {
+            Some(ctx) => ctx,
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "connection not found")),
+        };
+
+        let mut handler = Server::new(&mut ctx.socket, false);
+        let request = handler.receive()?;
+        match request {
+            Request::CounterAction(action) => {
+                match action {
+                    CounterAction::Increment => self.counter = self.counter.saturating_add(1),
+                    CounterAction::Decrement => self.counter = self.counter.saturating_sub(1),
+                    CounterAction::Get => (),
+                };
+                let response = Response::CounterValue(self.counter);
+                handler.send(&response)
+            },
+            _ => {
+                let response = Response::ProtocolError(ProtocolError::InvalidRequest);
+                handler.send(&response)
+            }
         }
     }
 
@@ -84,6 +125,10 @@ impl App {
             poll.timeout(PollTimeout::Msec(200));
             poll.add(PollItem::from_fd(&listener));
 
+            for (fd, _) in &self.connections {
+                poll.add(PollItem::from_fd(fd));
+            }
+
             let ready_items = match poll.wait() {
                 Ok(items) => items,
                 Err(e) => {
@@ -93,14 +138,46 @@ impl App {
             };
 
             // TODO: pidfd for child processes
-            let listener_ready = ready_items
-                .iter()
-                .any(|item| item.raw_fd() == listener.as_raw_fd());
+            let mut listener_ready = false;
+            let mut hangup_fds = Vec::new();
+            let mut ready_fds = Vec::new();
+
+            for item in ready_items {
+                if item.raw_fd() == listener.as_raw_fd() {
+                    if item.has_hangup() {
+                        eprintln!("app: listener hangup");
+                        return Err(io::Error::new(io::ErrorKind::Other, "listener hangup"));
+                    }
+                    listener_ready = item.can_read().unwrap_or(false);
+                    continue;
+                }
+
+                if item.has_hangup() {
+                    eprintln!("app: connection hangup on fd {}", item.raw_fd());
+                    hangup_fds.push(item.raw_fd());
+                    continue;
+                }
+
+                if item.can_read().unwrap_or(false) {
+                    ready_fds.push(item.raw_fd());
+                }
+            }
+
+            for fd in hangup_fds {
+                self.connections.remove(&fd);
+            }
+
+            for fd in ready_fds {
+                if let Err(e) = self.handle_request(fd) {
+                    eprintln!("app: error handling request on fd {}: {}", fd, e);
+                    self.connections.remove(&fd);
+                }
+            }
 
             if listener_ready {
                 loop {
-                    let mut context = match listener.accept() {
-                        Ok((socket, _)) => AppContext::new(socket),
+                    let socket = match listener.accept() {
+                        Ok((socket, _)) => socket,
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                         Err(e) => {
                             eprintln!("app: accept error: {}", e);
@@ -108,7 +185,7 @@ impl App {
                         },
                     };
 
-                    if let Err(e) = self.on_connect(&mut context) {
+                    if let Err(e) = self.on_connect(socket) {
                         eprintln!("app: error handling connection: {}", e);
                     }
                 }

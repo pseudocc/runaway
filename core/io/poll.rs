@@ -92,6 +92,10 @@ impl<'f> PollItem<'f> {
         Ok(self.write)
     }
 
+    pub fn has_hangup(&self) -> bool {
+        self.hangup
+    }
+
     pub fn raw_fd(&self) -> RawFd {
         self.fd.raw_fd()
     }

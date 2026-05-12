@@ -5,9 +5,23 @@ pub fn main() {
 
     let mut stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
 
-    use std::io::{Read, Write};
-    stream.write_all(b"counter").expect("Failed to write to socket");
-    let mut response = [0u8; 64];
-    let n = stream.read(&mut response).expect("Failed to read from socket");
-    println!("Response: {}", String::from_utf8_lossy(&response[..n]));
+    use runaway::protocol::*;
+
+    let mut handler = Client::new(&mut stream).expect("Failed to initialize client");
+    println!("Connected to runaway server");
+
+    let mut send_counter_action = |action: CounterAction| {
+        let request = Request::CounterAction(action);
+        handler.send(&request).expect("Failed to send request");
+        let response: Response = handler.receive().expect("Failed to receive response");
+        match response {
+            Response::CounterValue(value) => println!("Counter value: {}", value),
+            _ => println!("Unexpected response"),
+        }
+    };
+
+    send_counter_action(CounterAction::Increment);
+    send_counter_action(CounterAction::Increment);
+    send_counter_action(CounterAction::Get);
+    send_counter_action(CounterAction::Decrement);
 }

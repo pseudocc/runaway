@@ -4,3 +4,4 @@ pub mod fs;
 mod utils;
 
 pub mod app;
+pub mod protocol;
