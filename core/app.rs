@@ -13,18 +13,12 @@ mod unix {
 
 #[derive(Debug)]
 pub struct AppContext {
-    socket: unix::Stream,
+    stream: unix::Stream,
 }
 
 impl AppContext {
-    fn new(socket: unix::Stream) -> Self {
-        Self { socket }
-    }
-
-    fn try_clone(&self) -> io::Result<Self> {
-        Ok(Self {
-            socket: self.socket.try_clone()?,
-        })
+    fn new(stream: unix::Stream) -> Self {
+        Self { stream }
     }
 }
 
@@ -32,7 +26,7 @@ pub struct App {
     uid: u32,
     gid: u32,
     socket_path: PathBuf,
-    connections: HashMap<RawFd, AppContext>,
+    connections: HashMap<RawFd, unix::Stream>,
 
     // TODO: add real state variables here
     counter: usize,
@@ -49,16 +43,16 @@ impl App {
         }
     }
 
-    pub fn on_connect(&mut self, socket: unix::Stream) -> io::Result<()> {
+    pub fn on_connect(&mut self, stream: unix::Stream) -> io::Result<()> {
         use crate::protocol::*;
         use std::os::unix::io::AsRawFd;
 
         const MAX_CONNECTIONS: usize = 64;
 
         println!("app: new connection from socket");
-        let fd = socket.as_raw_fd();
-        let mut ctx = AppContext::new(socket);
-        let mut handler = Server::new(&mut ctx.socket, true);
+        let mut stream = stream;
+        let fd = stream.as_raw_fd();
+        let mut handler = Server::new(&mut stream, true);
         let request = handler.receive()?;
         match request {
             Request::ClientId if self.connections.len() >= MAX_CONNECTIONS => {
@@ -68,7 +62,7 @@ impl App {
             Request::ClientId => {
                 let response = Response::ClientId(handler.client_id);
                 handler.send(&response)?;
-                self.connections.insert(fd, ctx);
+                self.connections.insert(fd, stream);
                 Ok(())
             },
             _ => {
@@ -81,12 +75,12 @@ impl App {
     pub fn handle_request(&mut self, fd: RawFd) -> io::Result<()> {
         use crate::protocol::*;
 
-        let ctx = match self.connections.get_mut(&fd) {
-            Some(ctx) => ctx,
+        let mut stream = match self.connections.get_mut(&fd) {
+            Some(s) => s,
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "connection not found")),
         };
 
-        let mut handler = Server::new(&mut ctx.socket, false);
+        let mut handler = Server::new(&mut stream, false);
         let request = handler.receive()?;
         match request {
             Request::CounterAction(action) => {
@@ -176,8 +170,8 @@ impl App {
 
             if listener_ready {
                 loop {
-                    let socket = match listener.accept() {
-                        Ok((socket, _)) => socket,
+                    let stream = match listener.accept() {
+                        Ok((s, _)) => s,
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                         Err(e) => {
                             eprintln!("app: accept error: {}", e);
@@ -185,7 +179,7 @@ impl App {
                         },
                     };
 
-                    if let Err(e) = self.on_connect(socket) {
+                    if let Err(e) = self.on_connect(stream) {
                         eprintln!("app: error handling connection: {}", e);
                     }
                 }

@@ -91,7 +91,7 @@ mod end {
     use io::{Read, Write};
     use std::marker::PhantomData;
 
-    pub trait Control<'sock> {
+    pub trait Control<'so> {
         fn send<T>(&mut self, value: &T) -> io::Result<()>
         where
             T: Serialize;
@@ -102,14 +102,14 @@ mod end {
     }
 
     pub struct Any<F: format::Control> {
-        socket: UnixStream,
+        stream: UnixStream,
         _marker: PhantomData<F>,
     }
 
     impl<F: format::Control> Any<F> {
-        pub fn new(socket: UnixStream) -> Self {
+        pub fn new(stream: UnixStream) -> Self {
             Any {
-                socket,
+                stream,
                 _marker: PhantomData,
             }
         }
@@ -122,9 +122,9 @@ mod end {
         {
             let data = F::serialize(value)?;
             let len = (data.len() as u32).to_be_bytes();
-            self.socket.write_all(&len)?;
-            self.socket.write_all(&data)?;
-            self.socket.flush()?;
+            self.stream.write_all(&len)?;
+            self.stream.write_all(&data)?;
+            self.stream.flush()?;
             Ok(())
         }
 
@@ -133,25 +133,25 @@ mod end {
             T: for<'de> Deserialize<'de>,
         {
             let mut len_buf = [0u8; 4];
-            self.socket.read_exact(&mut len_buf)?;
+            self.stream.read_exact(&mut len_buf)?;
             let len = u32::from_be_bytes(len_buf) as usize;
             let mut buf = vec![0u8; len];
-            self.socket.read_exact(&mut buf)?;
+            self.stream.read_exact(&mut buf)?;
             F::deserialize(&buf)
         }
     }
 
-    pub struct Client<'sock, F: format::Control> {
+    pub struct Client<'so, F: format::Control> {
         id: ClientId,
-        socket: &'sock mut UnixStream,
+        stream: &'so mut UnixStream,
         _marker: PhantomData<F>,
     }
 
-    impl<'sock, F: format::Control> Client<'sock, F> {
-        pub fn new(socket: &'sock mut UnixStream) -> io::Result<Self> {
+    impl<'so, F: format::Control> Client<'so, F> {
+        pub fn new(stream: &'so mut UnixStream) -> io::Result<Self> {
             let mut client = Client {
                 id: ClientId::sentinel(),
-                socket,
+                stream,
                 _marker: PhantomData,
             };
             client.send(&Request::ClientId)?;
@@ -165,7 +165,7 @@ mod end {
         }
     }
 
-    impl<'sock, F: format::Control> Control<'sock> for Client<'sock, F> {
+    impl<'so, F: format::Control> Control<'so> for Client<'so, F> {
         fn send<T>(&mut self, value: &T) -> io::Result<()>
         where
             T: Serialize,
@@ -173,10 +173,10 @@ mod end {
             let id = self.id.0.to_le_bytes();
             let data = F::serialize(value)?;
             let len = (data.len() + id.len()) as u32;
-            self.socket.write_all(&len.to_be_bytes())?;
-            self.socket.write_all(&id)?;
-            self.socket.write_all(&data)?;
-            self.socket.flush()?;
+            self.stream.write_all(&len.to_be_bytes())?;
+            self.stream.write_all(&id)?;
+            self.stream.write_all(&data)?;
+            self.stream.flush()?;
             Ok(())
         }
 
@@ -185,43 +185,43 @@ mod end {
             T: for<'de> Deserialize<'de>,
         {
             let mut len_buf = [0u8; 4];
-            self.socket.read_exact(&mut len_buf)?;
+            self.stream.read_exact(&mut len_buf)?;
             let len = u32::from_be_bytes(len_buf) as usize;
             let mut buf = vec![0u8; len];
-            self.socket.read_exact(&mut buf)?;
+            self.stream.read_exact(&mut buf)?;
             F::deserialize(&buf)
         }
     }
 
-    pub struct Server<'sock, F: format::Control> {
+    pub struct Server<'so, F: format::Control> {
         pub(crate) client_id: ClientId,
-        socket: &'sock mut UnixStream,
+        stream: &'so mut UnixStream,
         new_connection: bool,
         _marker: PhantomData<F>,
     }
 
-    impl<'sock, F: format::Control> Server<'sock, F> {
-        pub fn new(socket: &'sock mut UnixStream, new_connection: bool) -> Self {
+    impl<'so, F: format::Control> Server<'so, F> {
+        pub fn new(stream: &'so mut UnixStream, new_connection: bool) -> Self {
             use std::os::unix::io::AsRawFd;
             Server {
-                client_id: ClientId(socket.as_raw_fd()),
-                socket,
+                client_id: ClientId(stream.as_raw_fd()),
+                stream,
                 new_connection,
                 _marker: PhantomData,
             }
         }
     }
 
-    impl<'sock, F: format::Control> Control<'sock> for Server<'sock, F> {
+    impl<'so, F: format::Control> Control<'so> for Server<'so, F> {
         fn send<T>(&mut self, value: &T) -> io::Result<()>
         where
             T: Serialize,
         {
             let data = F::serialize(value)?;
             let len = (data.len() as u32).to_be_bytes();
-            self.socket.write_all(&len)?;
-            self.socket.write_all(&data)?;
-            self.socket.flush()?;
+            self.stream.write_all(&len)?;
+            self.stream.write_all(&data)?;
+            self.stream.flush()?;
             Ok(())
         }
 
@@ -230,10 +230,10 @@ mod end {
             T: for<'de> Deserialize<'de>,
         {
             let mut len_buf = [0u8; 4];
-            self.socket.read_exact(&mut len_buf)?;
+            self.stream.read_exact(&mut len_buf)?;
             let len = u32::from_be_bytes(len_buf) as usize;
             let mut buf = vec![0u8; len];
-            self.socket.read_exact(&mut buf)?;
+            self.stream.read_exact(&mut buf)?;
             if !self.new_connection {
                 let id = ClientId(i32::from_le_bytes(buf[0..4].try_into().unwrap()));
                 if id != self.client_id {
@@ -247,5 +247,5 @@ mod end {
 }
 
 pub use end::{Control as EndControl, Any};
-pub type Client<'sock> = end::Client<'sock, Bincode>;
-pub type Server<'sock> = end::Server<'sock, Bincode>;
+pub type Client<'so> = end::Client<'so, Bincode>;
+pub type Server<'so> = end::Server<'so, Bincode>;
