@@ -247,7 +247,8 @@ mod end {
 
         pub fn send_error(&mut self, err: Error) -> Result<()> {
             let response = Response::ProtocolError(err.to_string());
-            self.send(&response);
+            // ignore any errors
+            let _ = self.send(&response);
             Err(err)
         }
     }
