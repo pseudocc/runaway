@@ -2,56 +2,96 @@ use std::io;
 use serde::{Serialize, Deserialize};
 use std::os::unix::net::UnixStream;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub enum SerdeError {
+    Json(serde_json::Error),
+    Bincode(bincode::Error),
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Io(io::Error),
+    Serde(SerdeError),
+    InvalidRequest,
+    ClientIdMismatch(ClientId),
+    ServerBusy,
+    SizeLimit,
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(err)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "io::Error: {}", e),
+            Self::Serde(e) => match e {
+                SerdeError::Json(e) => write!(f, "serde_json::Error: {}", e),
+                SerdeError::Bincode(e) => write!(f, "bincode::Error: {}", e),
+            },
+            Self::InvalidRequest => write!(f, "invalid request"),
+            Self::ClientIdMismatch(id) => write!(f, "client id {} does not match expected id", id.0),
+            Self::ServerBusy => write!(f, "server is busy"),
+            Self::SizeLimit => write!(f, "size limit exceeded"),
+        }
+    }
+}
+
 mod format {
     use super::*;
     pub trait Control {
-        fn deserialize<'de, T>(data: &'de [u8]) -> io::Result<T>
+        fn deserialize<'de, T>(data: &'de [u8]) -> Result<T>
         where
             T: Deserialize<'de>;
 
-        fn serialize<T>(value: &T) -> io::Result<Vec<u8>>
+        fn serialize<T>(value: &T) -> Result<Vec<u8>>
         where
             T: Serialize;
     }
 
     pub struct Json;
     impl Control for Json {
-        fn deserialize<'de, T>(data: &'de [u8]) -> io::Result<T>
+        fn deserialize<'de, T>(data: &'de [u8]) -> Result<T>
         where
             T: Deserialize<'de>,
         {
-            serde_json::from_slice(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            serde_json::from_slice(data).map_err(|e| Error::Serde(SerdeError::Json(e)))
         }
 
-        fn serialize<T>(value: &T) -> io::Result<Vec<u8>>
+        fn serialize<T>(value: &T) -> Result<Vec<u8>>
         where
             T: Serialize,
         {
-            serde_json::to_vec(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            serde_json::to_vec(value).map_err(|e| Error::Serde(SerdeError::Json(e)))
         }
     }
 
     pub struct Bincode;
     impl Control for Bincode {
-        fn deserialize<'de, T>(data: &'de [u8]) -> io::Result<T>
+        fn deserialize<'de, T>(data: &'de [u8]) -> Result<T>
         where
             T: Deserialize<'de>,
         {
-            bincode::deserialize(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            bincode::deserialize(data).map_err(|e| Error::Serde(SerdeError::Bincode(e)))
         }
 
-        fn serialize<T>(value: &T) -> io::Result<Vec<u8>>
+        fn serialize<T>(value: &T) -> Result<Vec<u8>>
         where
             T: Serialize,
         {
-            bincode::serialize(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            bincode::serialize(value).map_err(|e| Error::Serde(SerdeError::Bincode(e)))
         }
     }
 }
 
 pub use format::{Json, Bincode};
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ClientId(pub i32);
 
 impl ClientId {
@@ -74,16 +114,10 @@ pub enum Request {
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum ProtocolError {
-    MaxConnectionReached,
-    InvalidRequest,
-}
-
-#[derive(Serialize, Deserialize)]
 pub enum Response {
     ClientId(ClientId),
     CounterValue(usize),
-    ProtocolError(ProtocolError),
+    ProtocolError(String),
 }
 
 mod end {
@@ -92,11 +126,11 @@ mod end {
     use std::marker::PhantomData;
 
     pub trait Control<'so> {
-        fn send<T>(&mut self, value: &T) -> io::Result<()>
+        fn send<T>(&mut self, value: &T) -> Result<()>
         where
             T: Serialize;
 
-        fn receive<T>(&mut self) -> io::Result<T>
+        fn receive<T>(&mut self) -> Result<T>
         where
             T: for<'de> Deserialize<'de>;
     }
@@ -116,7 +150,7 @@ mod end {
     }
 
     impl<F: format::Control> Control<'_> for Any<F> {
-        fn send<T>(&mut self, value: &T) -> io::Result<()>
+        fn send<T>(&mut self, value: &T) -> Result<()>
         where
             T: Serialize,
         {
@@ -128,7 +162,7 @@ mod end {
             Ok(())
         }
 
-        fn receive<T>(&mut self) -> io::Result<T>
+        fn receive<T>(&mut self) -> Result<T>
         where
             T: for<'de> Deserialize<'de>,
         {
@@ -148,7 +182,7 @@ mod end {
     }
 
     impl<'so, F: format::Control> Client<'so, F> {
-        pub fn new(stream: &'so mut UnixStream) -> io::Result<Self> {
+        pub fn new(stream: &'so mut UnixStream) -> Result<Self> {
             let mut client = Client {
                 id: ClientId::sentinel(),
                 stream,
@@ -160,13 +194,13 @@ mod end {
                     client.id = id;
                     Ok(client)
                 }
-                _ => Err(io::Error::new(io::ErrorKind::InvalidData, "expected ClientId response")),
+                _ => Err(Error::InvalidRequest),
             }
         }
     }
 
     impl<'so, F: format::Control> Control<'so> for Client<'so, F> {
-        fn send<T>(&mut self, value: &T) -> io::Result<()>
+        fn send<T>(&mut self, value: &T) -> Result<()>
         where
             T: Serialize,
         {
@@ -180,7 +214,7 @@ mod end {
             Ok(())
         }
 
-        fn receive<T>(&mut self) -> io::Result<T>
+        fn receive<T>(&mut self) -> Result<T>
         where
             T: for<'de> Deserialize<'de>,
         {
@@ -210,10 +244,16 @@ mod end {
                 _marker: PhantomData,
             }
         }
+
+        pub fn send_error(&mut self, err: Error) -> Result<()> {
+            let response = Response::ProtocolError(err.to_string());
+            self.send(&response);
+            Err(err)
+        }
     }
 
     impl<'so, F: format::Control> Control<'so> for Server<'so, F> {
-        fn send<T>(&mut self, value: &T) -> io::Result<()>
+        fn send<T>(&mut self, value: &T) -> Result<()>
         where
             T: Serialize,
         {
@@ -225,7 +265,7 @@ mod end {
             Ok(())
         }
 
-        fn receive<T>(&mut self) -> io::Result<T>
+        fn receive<T>(&mut self) -> Result<T>
         where
             T: for<'de> Deserialize<'de>,
         {
@@ -237,7 +277,7 @@ mod end {
             if !self.new_connection {
                 let id = ClientId(i32::from_le_bytes(buf[0..4].try_into().unwrap()));
                 if id != self.client_id {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "client ID mismatch"));
+                    return Err(Error::ClientIdMismatch(id));
                 }
             }
 

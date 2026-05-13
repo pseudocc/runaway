@@ -3,6 +3,7 @@ use std::fs;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
+use crate::protocol;
 
 mod unix {
     pub(super) use std::os::unix::net::{
@@ -43,7 +44,7 @@ impl App {
         }
     }
 
-    pub fn on_connect(&mut self, stream: unix::Stream) -> io::Result<()> {
+    fn on_connect(&mut self, stream: unix::Stream) -> protocol::Result<()> {
         use crate::protocol::*;
         use std::os::unix::io::AsRawFd;
 
@@ -55,29 +56,24 @@ impl App {
         let mut handler = Server::new(&mut stream, true);
         let request = handler.receive()?;
         match request {
-            Request::ClientId if self.connections.len() >= MAX_CONNECTIONS => {
-                let response = Response::ProtocolError(ProtocolError::MaxConnectionReached);
-                handler.send(&response)
-            },
+            Request::ClientId if self.connections.len() >= MAX_CONNECTIONS =>
+                handler.send_error(protocol::Error::ServerBusy),
             Request::ClientId => {
                 let response = Response::ClientId(handler.client_id);
                 handler.send(&response)?;
                 self.connections.insert(fd, stream);
                 Ok(())
             },
-            _ => {
-                let response = Response::ProtocolError(ProtocolError::InvalidRequest);
-                handler.send(&response)
-            },
+            _ => handler.send_error(protocol::Error::InvalidRequest),
         }
     }
 
-    pub fn handle_request(&mut self, fd: RawFd) -> io::Result<()> {
-        use crate::protocol::*;
+    fn handle_request(&mut self, fd: RawFd) -> protocol::Result<()> {
+        use protocol::*;
 
         let mut stream = match self.connections.get_mut(&fd) {
             Some(s) => s,
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "connection not found")),
+            None => unreachable!("app: handle_request called with unknown fd {}", fd),
         };
 
         let mut handler = Server::new(&mut stream, false);
@@ -92,10 +88,7 @@ impl App {
                 let response = Response::CounterValue(self.counter);
                 handler.send(&response)
             },
-            _ => {
-                let response = Response::ProtocolError(ProtocolError::InvalidRequest);
-                handler.send(&response)
-            }
+            _ => handler.send_error(protocol::Error::InvalidRequest),
         }
     }
 
