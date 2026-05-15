@@ -175,14 +175,14 @@ mod end {
         }
     }
 
-    pub struct Client<'so, F: format::Control> {
+    pub struct Client<F: format::Control> {
         id: ClientId,
-        stream: &'so mut UnixStream,
+        stream: UnixStream,
         _marker: PhantomData<F>,
     }
 
-    impl<'so, F: format::Control> Client<'so, F> {
-        pub fn new(stream: &'so mut UnixStream) -> Result<Self> {
+    impl<F: format::Control> Client<F> {
+        pub fn new(stream: UnixStream) -> Result<Self> {
             let mut client = Client {
                 id: ClientId::sentinel(),
                 stream,
@@ -199,7 +199,7 @@ mod end {
         }
     }
 
-    impl<'so, F: format::Control> Control<'so> for Client<'so, F> {
+    impl<F: format::Control> Control<'_> for Client<F> {
         fn send<T>(&mut self, value: &T) -> Result<()>
         where
             T: Serialize,
@@ -288,5 +288,5 @@ mod end {
 }
 
 pub use end::{Control as EndControl, Any};
-pub type Client<'so> = end::Client<'so, Bincode>;
+pub type Client = end::Client<Bincode>;
 pub type Server<'so> = end::Server<'so, Bincode>;

@@ -3,11 +3,11 @@ use std::os::unix::net::UnixStream;
 pub fn main() {
     let socket_path = std::env::var("RUNAWAY_SOCKET").expect("RUNAWAY_SOCKET environment variable not set");
 
-    let mut stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
+    let stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
 
     use runaway::protocol::*;
 
-    let mut handler = Client::new(&mut stream).expect("Failed to initialize client");
+    let mut handler = Client::new(stream).expect("Failed to initialize client");
     println!("Connected to runaway server");
 
     let mut send_counter_action = |action: CounterAction| {
