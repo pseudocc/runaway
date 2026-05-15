@@ -26,6 +26,22 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<Error> for io::Error {
+    fn from(err: Error) -> Self {
+        match err {
+            Error::Io(e) => e,
+            Error::InvalidRequest => io::Error::new(io::ErrorKind::InvalidData, "invalid request"),
+            Error::ClientIdMismatch(id) => io::Error::new(io::ErrorKind::ConnectionRefused, format!("client id {} does not match expected id", id.0)),
+            Error::ServerBusy => io::Error::new(io::ErrorKind::ConnectionRefused, "server is busy"),
+            Error::SizeLimit => io::Error::new(io::ErrorKind::InvalidData, "size limit exceeded"),
+            Error::Serde(e) => match e {
+                SerdeError::Json(e) => io::Error::new(io::ErrorKind::InvalidData, format!("serde_json::Error: {}", e)),
+                SerdeError::Bincode(e) => io::Error::new(io::ErrorKind::InvalidData, format!("bincode::Error: {}", e)),
+            },
+        }
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

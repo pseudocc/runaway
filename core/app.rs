@@ -12,15 +12,8 @@ mod unix {
     };
 }
 
-#[derive(Debug)]
 pub struct AppContext {
-    stream: unix::Stream,
-}
-
-impl AppContext {
-    fn new(stream: unix::Stream) -> Self {
-        Self { stream }
-    }
+    handler: protocol::Client,
 }
 
 pub struct App {
@@ -44,6 +37,43 @@ impl App {
             connections: HashMap::new(),
             counter: 0,
         }
+    }
+
+    fn fork_poc(&mut self) -> io::Result<()> {
+        use protocol::*;
+        use crate::process::{Fork, ForkResult};
+        let (stream, child_stream) = unix::Stream::pair()?;
+
+        match Fork::new().fork()? {
+            ForkResult::Child => {
+                use std::{thread, time::Duration};
+                let handler = protocol::Client::new(child_stream)?;
+                let mut app_context = AppContext { handler };
+
+                for request in [
+                    Request::CounterAction(CounterAction::Increment),
+                    Request::CounterAction(CounterAction::Increment),
+                    Request::CounterAction(CounterAction::Get),
+                    Request::CounterAction(CounterAction::Decrement),
+                ] {
+                    app_context.handler.send(&request).expect("child: failed to send request");
+                    let response: Response = app_context.handler.receive().expect("child: failed to receive response");
+
+                    match response {
+                        Response::CounterValue(value) => println!("child: counter value is {}", value),
+                        _ => panic!("child: unexpected response"),
+                    }
+                    thread::sleep(Duration::from_secs(1));
+                }
+
+                std::process::exit(0);
+            },
+            ForkResult::Parent(process) => {
+                println!("app: forked child process with pid {}", process.pid);
+                self.on_connect(stream)?;
+            },
+        }
+        Ok(())
     }
 
     fn on_connect(&mut self, stream: unix::Stream) -> protocol::Result<()> {
@@ -103,6 +133,7 @@ impl App {
 
         let listener = unix::Listener::bind(&self.socket_path)?;
         listener.set_nonblocking(true)?;
+        let mut test_fork_poc = true;
 
         loop {
             use crate::io::{Poll, PollItem, PollTimeout};
@@ -159,6 +190,13 @@ impl App {
                     eprintln!("app: error handling request on fd {}: {}", fd, e);
                     self.connections.remove(&fd);
                 }
+            }
+
+            if test_fork_poc {
+                if let Err(e) = self.fork_poc() {
+                    eprintln!("app: error in fork poc: {}", e);
+                }
+                test_fork_poc = false;
             }
 
             if listener_ready {
