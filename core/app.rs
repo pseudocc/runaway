@@ -27,6 +27,7 @@ pub struct App {
     uid: u32,
     gid: u32,
     socket_path: PathBuf,
+    max_connections: usize,
     connections: HashMap<RawFd, unix::Stream>,
 
     // TODO: add real state variables here
@@ -39,6 +40,7 @@ impl App {
             uid: unsafe { libc::getuid() },
             gid: unsafe { libc::getgid() },
             socket_path: socket_path.as_ref().to_path_buf(),
+            max_connections: 512,
             connections: HashMap::new(),
             counter: 0,
         }
@@ -48,15 +50,13 @@ impl App {
         use crate::protocol::*;
         use std::os::unix::io::AsRawFd;
 
-        const MAX_CONNECTIONS: usize = 64;
-
         println!("app: new connection from socket");
         let mut stream = stream;
         let fd = stream.as_raw_fd();
         let mut handler = Server::new(&mut stream, true);
         let request = handler.receive()?;
         match request {
-            Request::ClientId if self.connections.len() >= MAX_CONNECTIONS =>
+            Request::ClientId if self.connections.len() >= self.max_connections =>
                 handler.send_error(protocol::Error::ServerBusy),
             Request::ClientId => {
                 let response = Response::ClientId(handler.client_id);
