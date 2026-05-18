@@ -12,8 +12,44 @@ mod unix {
     };
 }
 
+pub mod typed {
+    use crate::protocol;
+
+    pub trait Request {
+        type Output;
+
+        fn into_request(self) -> protocol::Request;
+        fn from_response(reponse: protocol::Response) -> protocol::Result<Self::Output>;
+    }
+
+    impl Request for protocol::CounterAction {
+        type Output = usize;
+
+        fn into_request(self) -> protocol::Request {
+            return protocol::Request::CounterAction(self);
+        }
+
+        fn from_response(response: protocol::Response) -> protocol::Result<Self::Output> {
+            match response {
+                protocol::Response::CounterValue(n) => Ok(n),
+                _ => return Err(protocol::Error::InvalidRequest),
+            }
+        }
+    }
+}
+
 pub struct AppContext {
     handler: protocol::Client,
+}
+
+impl AppContext {
+    fn call<R: typed::Request>(&mut self, request: R) -> protocol::Result<R::Output> {
+        use crate::protocol::EndControl;
+        let protocol_request = request.into_request();
+        self.handler.send(&protocol_request)?;
+        let protocol_response = self.handler.receive()?;
+        R::from_response(protocol_response)
+    }
 }
 
 pub struct App {
@@ -49,20 +85,14 @@ impl App {
                 use std::{thread, time::Duration};
                 let handler = protocol::Client::new(child_stream)?;
                 let mut app_context = AppContext { handler };
-
-                for request in [
-                    Request::CounterAction(CounterAction::Increment),
-                    Request::CounterAction(CounterAction::Increment),
-                    Request::CounterAction(CounterAction::Get),
-                    Request::CounterAction(CounterAction::Decrement),
+                for counter_actions in [
+                    CounterAction::Increment,
+                    CounterAction::Increment,
+                    CounterAction::Get,
+                    CounterAction::Decrement,
                 ] {
-                    app_context.handler.send(&request).expect("child: failed to send request");
-                    let response: Response = app_context.handler.receive().expect("child: failed to receive response");
-
-                    match response {
-                        Response::CounterValue(value) => println!("child: counter value is {}", value),
-                        _ => panic!("child: unexpected response"),
-                    }
+                    let counter_value = app_context.call(counter_actions)?;
+                    println!("child: counter={}", counter_value);
                     thread::sleep(Duration::from_secs(1));
                 }
 
