@@ -18,6 +18,7 @@ pub enum Error {
     ClientIdMismatch(ClientId),
     ServerBusy,
     SizeLimit,
+    Anyhow(String),
 }
 
 impl From<io::Error> for Error {
@@ -38,6 +39,7 @@ impl From<Error> for io::Error {
                 SerdeError::Json(e) => io::Error::new(io::ErrorKind::InvalidData, format!("serde_json::Error: {}", e)),
                 SerdeError::Bincode(e) => io::Error::new(io::ErrorKind::InvalidData, format!("bincode::Error: {}", e)),
             },
+                Error::Anyhow(msg) => io::Error::new(io::ErrorKind::Other, msg),
         }
     }
 }
@@ -54,6 +56,7 @@ impl std::fmt::Display for Error {
             Self::ClientIdMismatch(id) => write!(f, "client id {} does not match expected id", id.0),
             Self::ServerBusy => write!(f, "server is busy"),
             Self::SizeLimit => write!(f, "size limit exceeded"),
+            Self::Anyhow(msg) => write!(f, "{}", msg),
         }
     }
 }

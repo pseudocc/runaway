@@ -22,20 +22,28 @@ pub mod typed {
         fn from_response(reponse: protocol::Response) -> protocol::Result<Self::Output>;
     }
 
-    impl Request for protocol::CounterAction {
-        type Output = usize;
+    macro_rules! impl_typed_request {
+        ($in_type:ty, $out_type:ty, $request_variant:ident, $response_variant:pat => $response_value:expr) => {
+            impl Request for $in_type {
+                type Output = $out_type;
 
-        fn into_request(self) -> protocol::Request {
-            return protocol::Request::CounterAction(self);
-        }
+                fn into_request(self) -> protocol::Request {
+                    return protocol::Request::$request_variant(self);
+                }
 
-        fn from_response(response: protocol::Response) -> protocol::Result<Self::Output> {
-            match response {
-                protocol::Response::CounterValue(n) => Ok(n),
-                _ => return Err(protocol::Error::InvalidRequest),
+                fn from_response(response: protocol::Response) -> protocol::Result<Self::Output> {
+                    use protocol::Response;
+                    match response {
+                        $response_variant => Ok($response_value),
+                        Response::ProtocolError(err) => Err(protocol::Error::Anyhow(err)),
+                        _ => return Err(protocol::Error::InvalidRequest),
+                    }
+                }
             }
-        }
+        };
     }
+
+    impl_typed_request!(protocol::CounterAction, usize, CounterAction, Response::CounterValue(n) => n);
 }
 
 pub struct AppContext {
