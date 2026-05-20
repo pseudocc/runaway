@@ -5,7 +5,7 @@ pub fn main() {
 
     let stream = UnixStream::connect(socket_path).expect("Failed to connect to socket");
 
-    use runaway::protocol::*;
+    use runaway::protocol::app::*;
 
     let mut handler = Client::new(stream).expect("Failed to initialize client");
     println!("Connected to runaway server");

@@ -3,7 +3,7 @@ use std::fs;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
-use crate::protocol;
+use crate::protocol::app as protocol;
 
 mod unix {
     pub(super) use std::os::unix::net::{
@@ -13,7 +13,7 @@ mod unix {
 }
 
 pub mod typed {
-    use crate::protocol;
+    use super::protocol;
 
     pub trait Request {
         type Output;
@@ -52,7 +52,7 @@ pub struct AppContext {
 
 impl AppContext {
     fn call<R: typed::Request>(&mut self, request: R) -> protocol::Result<R::Output> {
-        use crate::protocol::EndControl;
+        use protocol::*;
         let protocol_request = request.into_request();
         self.handler.send(&protocol_request)?;
         let protocol_response = self.handler.receive()?;
@@ -115,7 +115,7 @@ impl App {
     }
 
     fn on_connect(&mut self, stream: unix::Stream) -> protocol::Result<()> {
-        use crate::protocol::*;
+        use protocol::*;
         use std::os::unix::io::AsRawFd;
 
         println!("app: new connection from socket");
