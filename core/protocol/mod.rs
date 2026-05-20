@@ -127,9 +127,31 @@ pub enum CounterAction {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct TrekId {
+    way: String,
+    number: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum TrekStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Embark {
+    library: String,
+    way: String,
+    input: Vec<u8>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum Request {
     ClientId,
     CounterAction(CounterAction),
+    Embark(Embark),
+    Status(TrekId),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -137,6 +159,8 @@ pub enum Response {
     ClientId(ClientId),
     CounterValue(usize),
     ProtocolError(String),
+    Embark(TrekId),
+    Status(TrekStatus),
 }
 
 mod end {
