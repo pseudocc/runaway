@@ -139,7 +139,7 @@ pub mod impls {
         }
     }
 
-    impl<F: format::Control> EndControl<'_> for Client<F> {
+    impl<F: format::Control> EndControl for Client<F> {
         type Error = Error;
         fn send<T>(&mut self, value: &T) -> Result<()>
         where
@@ -196,7 +196,7 @@ pub mod impls {
         }
     }
 
-    impl<'so, F: format::Control> EndControl<'so> for Server<'so, F> {
+    impl<'so, F: format::Control> EndControl for Server<'so, F> {
         type Error = Error;
         fn send<T>(&mut self, value: &T) -> Result<()>
         where

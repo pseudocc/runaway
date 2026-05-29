@@ -62,8 +62,8 @@ pub use format::{Json, Bincode};
 mod end {
     use super::*;
 
-    pub trait Control<'so> {
-        type Error; 
+    pub trait Control {
+        type Error;
 
         fn send<T>(&mut self, value: &T) -> Result<(), Self::Error>
         where
