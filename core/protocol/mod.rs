@@ -74,3 +74,34 @@ mod end {
             T: for<'de> Deserialize<'de>;
     }
 }
+
+pub mod typed {
+    use serde::{Serialize, Deserialize};
+
+    pub trait Request {
+        type Request: Serialize;
+        type Response: for<'de> Deserialize<'de>;
+        type Output;
+        type Error;
+
+        fn into_request(self) -> Self::Request;
+        fn from_response(response: Self::Response) -> Result<Self::Output, Self::Error>;
+    }
+
+    pub trait Handler {
+        type Error;
+
+        fn handle<R: Request<Error = Self::Error>>(&mut self, request: R) -> Result<R::Output, R::Error>;
+    }
+
+    impl<C: super::end::Control> Handler for C {
+        type Error = C::Error;
+
+        fn handle<R: Request<Error = C::Error>>(&mut self, request: R) -> Result<R::Output, R::Error> {
+            let request = request.into_request();
+            self.send(&request)?;
+            let response = self.receive()?;
+            R::from_response(response)
+        }
+    }
+}

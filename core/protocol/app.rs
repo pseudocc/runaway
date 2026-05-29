@@ -233,5 +233,32 @@ pub mod impls {
     }
 }
 
+pub mod typed {
+    macro_rules! impl_request {
+        ($action:ident, $response:ident($output:ty)) => {
+            impl crate::protocol::typed::Request for super::$action {
+                type Request = super::Request;
+                type Response = super::Response;
+                type Output = $output;
+                type Error = super::Error;
+
+                fn into_request(self) -> Self::Request {
+                    Self::Request::$action(self)
+                }
+
+                fn from_response(response: Self::Response) -> super::Result<Self::Output> {
+                    match response {
+                        Self::Response::$response(value) => Ok(value),
+                        Self::Response::ProtocolError(err) => Err(Self::Error::Anyhow(err)),
+                        _ => Err(Self::Error::InvalidRequest),
+                    }
+                }
+            }
+        };
+    }
+
+    impl_request!(CounterAction, CounterValue(usize));
+}
+
 pub type Client = impls::Client<format::Bincode>;
 pub type Server<'so> = impls::Server<'so, format::Bincode>;
